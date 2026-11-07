@@ -17,17 +17,7 @@ const userSchema = new mongoose.Schema({
     password:{
         type: String,
         required: [true, "Password is required"],
-        select: false, // if we use find by id and GET the user info the password field will not display
-        validate: {
-            validator: function(value) {
-                if (!this.isModified || !this.isModified('password')) {
-                    return true; 
-                }
-                const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-                return passwordRegex.test(value);
-            },
-            message: 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character'
-        } // we used validator function bcz when user updates the password the hash algo and regex won't throw an error while updating
+        select: false, 
     },
     verified:{
         type: Boolean,

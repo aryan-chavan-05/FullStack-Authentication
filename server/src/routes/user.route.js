@@ -1,22 +1,23 @@
 import express from "express";
+import { login, logout, register } from "../controllers/user.controller.js";
 
 const route = express.Router();
 
-route.post("/register",);
+route.post("/register",register);
 
 
-route.post("/login",);
+route.post("/login",login);
 
 
-route.get("/logout",);
+route.get("/logout",logout);
 
 
-route.get("/logout-All");
+// route.get("/logout-All");
 
 
-route.get("/rotate-token",);
+// route.get("/rotate-token",);
 
 
-route.get("/verify",);
+// route.get("/verify",);
 
 export default route;
