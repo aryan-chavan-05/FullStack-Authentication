@@ -1,15 +1,25 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import config from "../config/env.js";
+import crypto from "crypto";
 import userModel from "../models/userSchema.js";
+import { generateAccessToken, generateRefreshToken } from "../utils/generateToken.js";
+import sessionModel from "../models/sessionSchema.js";
+
+const refreshTokenCookieOptions = {
+    httpOnly: true,
+    secure: config.NODE_ENV === "production",
+    sameSite: "strict"
+};
 
 export const register = async (req , res) => {
-   try{
-    const {username , email , password} = req.body;
+    const {username , email , password} = req.body ?? {};
 
-    if(!username || !email || !password ){
-        return res.status(401).json({
-            message: "Invalid Credentials"
+    if (typeof username !== "string" || !username.trim() ||
+        typeof email !== "string" || !email.trim() ||
+        typeof password !== "string" || !password) {
+        return res.status(400).json({
+            message: "Fill the input correctly"
         })
     }
 
@@ -21,27 +31,6 @@ export const register = async (req , res) => {
         password: hashPassword
     })
 
-    const token = await jwt.sign({
-        id: createUser._id,
-        email: createUser.email
-    }, config.JWT_SECRET ,
-    {
-        expiresIn: "7d"
-    })
-
-    if(!token){
-        return res.status(404).json({
-            message: "Register Again"
-        })
-    }
-
-    res.cookie("token", token , {
-        httpOnly: true,
-        secure: config.NODE_ENV === "development",
-        sameSite: "strict",
-        maxAge: 7*24*60*60*1000
-    })
-
     res.status(200).json({
         message: "User registered successfully",
         user:{
@@ -49,20 +38,20 @@ export const register = async (req , res) => {
             email: createUser.email
         }
     })
-   }
-   catch(error){
-    console.error(`Registration Api Have Error: ${error.message}`)
-    return res.status(500).json({
-        message: "Internal server error"
-    })
-   }
 }
 
-export const login = async (req , res) => {
-    try{
-    const {email , password} = req.body;
 
-    const user = await userModel.findOne({email}).select("+password");
+export const login = async (req , res) => {
+    const {email , password} = req.body ?? {};
+
+    if (typeof email !== "string" || !email.trim() ||
+        typeof password !== "string" || !password) {
+        return res.status(400).json({
+            message: "Email and password are required"
+        });
+    }
+
+    const user = await userModel.findOne({ email: email.trim().toLowerCase() }).select("+password");
 
     if(!user){
         return res.status(403).json({
@@ -78,86 +67,62 @@ export const login = async (req , res) => {
         })
     }
 
-    if(!user.verified){
-        user.verified = true;
-        await user.save();
-    }
+    const refreshToken = generateRefreshToken(user);
+    const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex")
 
-    const token = jwt.sign({
-        id: user._id,
-        email: user.email
-    }, config.JWT_SECRET,{
-        expiresIn: "7d"
+    const session = await sessionModel.create({
+        userId: user._id,
+        refreshTokenHash: refreshTokenHash,
+        ip: req.ip || "unknown",
+        userAgent: req.get("user-agent") || "unknown",
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
     })
 
-    if(!token){
-        return res.status(404).json({
-            message: "Login Again"
-        })
-    }
+    const accessToken = generateAccessToken(user, session);
 
-    res.cookie("token", token);
+    res.cookie("refreshToken", refreshToken, {
+        ...refreshTokenCookieOptions,
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
 
     res.status(200).json({
         message: "Login successfully",
         user:{
             id: user._id,
             email: user.email
-        }
+        },
+        accessToken
     })
-    }
-    catch(error){
-        console.error(`Login have an error: ${error.message}`)
-        return res.status(500).json({
-            message: "Internal Server Error"
-        })
-    }
 }
-
 export const logout = async (req, res) => {
-  try {
-    const token = req.cookies?.token;
 
-    if (!token) {
+    const refreshToken = req.cookies?.refreshToken;
+
+    if (!refreshToken) {
       return res.status(401).json({
         message: "Unauthorized - No token provided",
       });
     }
 
-    try {
-      const decoded = jwt.verify(token, config.JWT_SECRET);
-
-      const identifier = decoded._id || decoded.email || decoded.username;
-
-      if (identifier) {
-        await userModel.findOneAndUpdate(
-          {
-            $or: [
-              { email: identifier },
-              { username: identifier },
-              ...(identifier.toString().match(/^[0-9a-fA-F]{24}$/) ? [{ _id: identifier }] : [])
-            ]
-          },
-          { verified: false }
-        );
-      }
-    } catch (jwtErr) {
-      console.warn("Invalid or expired token during logout:", jwtErr.message);
+    const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
+    if (typeof decoded === "string" || !decoded.id) {
+        return res.status(401).json({
+            message: "Unauthorized"
+        });
     }
 
-    res.clearCookie("token", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+    const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+    await sessionModel.updateOne({
+        userId: decoded.id,
+        refreshTokenHash,
+        revoked: false
+    }, {
+        $set: { revoked: true }
     });
+
+    res.clearCookie("refreshToken", refreshTokenCookieOptions);
 
     return res.status(200).json({
       message: "Logout successfully",
     });
-  } catch (error) {
-    console.error("Logout error:", error);
-    return res.status(500).json({
-      message: "Internal Server error",
-    });
-  }
-};
+}

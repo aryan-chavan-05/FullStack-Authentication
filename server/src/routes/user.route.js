@@ -11,13 +11,4 @@ route.post("/login",login);
 
 route.get("/logout",logout);
 
-
-// route.get("/logout-All");
-
-
-// route.get("/rotate-token",);
-
-
-// route.get("/verify",);
-
 export default route;
